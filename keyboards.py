@@ -30,3 +30,8 @@ def employee_details_keyboard(emp_id: int, is_admin: bool) -> InlineKeyboardMark
         ])
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_department")])
     return InlineKeyboardMarkup(buttons)
+
+def user_main_menu(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("👥 Мои сотрудники", callback_data="view_my_department")]
+    ])

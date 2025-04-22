@@ -1,4 +1,8 @@
-from telegram import Update
+# handlers.py
+import logging
+from datetime import datetime
+import random
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes,
     CommandHandler,
@@ -7,20 +11,14 @@ from telegram.ext import (
     filters,
     ConversationHandler
 )
-from datetime import datetime
-import random
 from database import Session, Department, Employee
-from keyboards import (
-    admin_main_menu,
-    department_pagination,
-    employee_details_keyboard
-)
+from keyboards import admin_main_menu, user_main_menu, department_pagination
 from utils import is_admin, generate_confirm_code, validate_date
-from config import PAGE_SIZE, LOG_LEVEL, CONFIRM_CODE_LENGTH
 from states import *
+from config import PAGE_SIZE
 
 # Настройка логирования
-logging.basicConfig(level=LOG_LEVEL)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -167,25 +165,62 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MAIN_MENU
 
 
+async def add_employee_general_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Старт добавления сотрудника (выбор отдела)"""
+    if not is_admin(update.effective_user.id):
+        await update.callback_query.answer("🚫 Доступ запрещён!", show_alert=True)
+        return
+
+    with Session() as session:
+        departments = Department.get_all(session)
+
+    buttons = [
+        [InlineKeyboardButton(dept.name, callback_data=f"add_emp_{dept.id}")]
+        for dept in departments
+    ]
+    buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="main_menu")])
+
+    await update.callback_query.message.edit_text(
+        "Выберите отдел для сотрудника:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+    return ADD_EMPLOYEE_START  # Возвращаем состояние
+
+
+async def add_employee_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало ввода данных сотрудника"""
+    query = update.callback_query
+    dept_id = int(query.data.split("_")[2])
+    context.user_data["current_dept"] = dept_id
+
+    await query.message.edit_text(
+        "Введите ФИО сотрудника:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отмена", callback_data="main_menu")]
+        ])
+    )
+    return ADD_EMPLOYEE_NAME
+
 # ================== РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ ==================
 
 def get_handlers() -> list:
-    """Возвращает список обработчиков для регистрации"""
     return [
         ConversationHandler(
-            entry_points=[CommandHandler("start", start)],
+            entry_points=[
+                CommandHandler("start", start),
+                CallbackQueryHandler(add_employee_general_start, pattern=r"^add_employee$")  # Добавлено
+            ],
             states={
                 MAIN_MENU: [
-                    CallbackQueryHandler(view_departments, pattern=r"^view_departments"),
-                    CallbackQueryHandler(add_department_start, pattern=r"^add_department")
+                    CallbackQueryHandler(view_departments, pattern=r"^view_departments_"),
+                    CallbackQueryHandler(add_department_start, pattern=r"^add_department$"),
+                    CallbackQueryHandler(add_employee_general_start, pattern=r"^add_employee$")  # Добавлено
                 ],
-                ADD_DEPARTMENT: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_department_finish)
-                ],
-                CONFIRM_DELETE: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, execute_delete)
+                ADD_EMPLOYEE_START: [  # Добавьте состояние
+                    CallbackQueryHandler(add_employee_start, pattern=r"^add_emp_"),
+                    CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
                 ]
             },
-            fallbacks=[CallbackQueryHandler(show_main_menu, pattern=r"^main_menu")]
+            fallbacks=[]
         )
     ]
