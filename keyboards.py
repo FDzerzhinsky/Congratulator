@@ -7,7 +7,7 @@ def admin_main_menu() -> InlineKeyboardMarkup:
     """Главное меню администратора"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить отдел", callback_data="add_department"),
-         InlineKeyboardButton("👥 Добавить сотрудника", callback_data="add_employee")],
+         InlineKeyboardButton("👥 Добавить сотрудника", callback_data="add_employee")],  # Проверьте callback_data
         [InlineKeyboardButton("📂 Просмотреть отделы", callback_data="view_departments_1")]
     ])
 
