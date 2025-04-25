@@ -169,29 +169,83 @@ async def confirm_delete_department(update: Update, context: ContextTypes.DEFAUL
     )
     return CONFIRM_DELETE
 
+
 async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполнение удаления"""
     user_input = update.message.text
     confirm_code = context.user_data.get('confirm_code')
-    target_type, target_id = context.user_data.get('delete_target')
+    delete_target = context.user_data.get('delete_target')
 
-    if user_input != confirm_code:
+    if not delete_target or user_input != confirm_code:
         await update.message.reply_text("❌ Неверный код подтверждения!")
         return await show_main_menu(update, context)
 
     with Session() as session:
-        if target_type == "department":
-            department = session.get(Department, target_id)
+        if delete_target['type'] == "department":
+            department = session.get(Department, delete_target['id'])
             session.delete(department)
-        elif target_type == "employee":
-            employee = session.get(Employee, target_id)
-            session.delete(employee)
-
         session.commit()
 
-    await update.message.reply_text("✅ Удаление выполнено успешно!")
+    await update.message.reply_text("✅ Отдел успешно удалён!")
+    return await show_main_menu(update, context)
+async def edit_department_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Редактирование названия отдела"""
+    query = update.callback_query
+    dept_id = int(query.data.split('_')[3])
+    context.user_data['edit_dept'] = dept_id
+
+    await query.message.edit_text(
+        "📝 Введите новое название отдела:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"edit_dept_{dept_id}")]]
+        )
+    )
+    return EDIT_DEPARTMENT
+
+async def save_department_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохранение нового названия отдела"""
+    new_name = update.message.text.strip()
+    dept_id = context.user_data.get('edit_dept')
+
+    with Session() as session:
+        department = session.get(Department, dept_id)
+        department.name = new_name
+        session.commit()
+
+    await update.message.reply_text(f"✅ Отдел переименован в '{new_name}'!")
     return await show_main_menu(update, context)
 
+async def edit_employee_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Старт редактирования сотрудника"""
+    query = update.callback_query
+    emp_id = int(query.data.split('_')[2])
+    context.user_data['edit_emp'] = emp_id
+
+    buttons = [
+        [InlineKeyboardButton("✏️ ФИО", callback_data=f"edit_emp_name_{emp_id}")],
+        [InlineKeyboardButton("📅 Дата рождения", callback_data=f"edit_emp_birth_{emp_id}")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"emp_{emp_id}")]
+    ]
+
+    await query.message.edit_text(
+        "Выберите поле для редактирования:",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+    return EDIT_EMPLOYEE_FIELD
+
+
+async def delete_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаление сотрудника"""
+    query = update.callback_query
+    emp_id = int(query.data.split('_')[2])
+
+    with Session() as session:
+        employee = session.get(Employee, emp_id)
+        session.delete(employee)
+        session.commit()
+
+    await query.answer("✅ Сотрудник удалён!")
+    return await view_employees(update, context, dept_id=employee.department_id)
 
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 
@@ -344,18 +398,14 @@ async def add_employee_tg_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     return await show_main_menu(update, context)
 
-    # Отправляем новое сообщение вместо редактирования предыдущего
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="✅ Сотрудник успешно добавлен!"
-    )
-    return await show_main_menu(update, context)
 
-
-async def view_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def view_employees(update: Update, context: ContextTypes.DEFAULT_TYPE, dept_id: int = None):
     query = update.callback_query
-    await query.answer()
-    dept_id = int(query.data.split('_')[1])
+    if query:
+        await query.answer()
+        dept_id = int(query.data.split('_')[1]) if not dept_id else dept_id
+    else:
+        dept_id = context.user_data.get('current_dept')
 
     with Session() as session:
         department = session.get(Department, dept_id)
@@ -366,20 +416,25 @@ async def view_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prefix = "👑 " if emp.is_head else ""
         buttons.append([InlineKeyboardButton(f"{prefix}{emp.full_name}", callback_data=f"emp_{emp.id}")])
 
-    # Кнопки для админа
-    if is_admin(query.from_user.id):
+    if is_admin(update.effective_user.id):
         buttons.append([
             InlineKeyboardButton("✏️ Редактировать отдел", callback_data=f"edit_dept_{dept_id}"),
             InlineKeyboardButton("➕ Добавить сотрудника", callback_data=f"add_emp_{dept_id}")
         ])
 
-    # Исправленная кнопка "Назад" - передаем текущую страницу
     buttons.append([InlineKeyboardButton("🔙 Назад", callback_data="view_departments_1")])
 
-    await query.edit_message_text(
-        f"Отдел: {department.name}\nСотрудники:",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    if query:
+        await query.edit_message_text(
+            f"Отдел: {department.name}\nСотрудники:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    else:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"Отдел: {department.name}\nСотрудники:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
     return VIEW_EMPLOYEES
 
 
@@ -392,6 +447,9 @@ async def view_employee_details(update: Update, context: ContextTypes.DEFAULT_TY
     with Session() as session:
         employee = session.get(Employee, emp_id)
         department = employee.department
+
+    # Сохраняем ID отдела для кнопки "Назад"
+    context.user_data['current_dept'] = department.id
 
     text = (
         f"👤 {employee.full_name}\n"
@@ -429,6 +487,12 @@ def get_handlers() -> list:
                     CallbackQueryHandler(view_employees, pattern=r"^dept_"),
                     CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
                 ],
+                EDIT_DEPARTMENT: [
+                    CallbackQueryHandler(edit_department_name, pattern=r"^edit_dept_name_"),
+                    CallbackQueryHandler(confirm_delete_department, pattern=r"^delete_dept_"),
+                    CallbackQueryHandler(view_employees, pattern=r"^dept_"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_department_name)
+                ],
                 VIEW_EMPLOYEES: [
                     CallbackQueryHandler(view_employee_details, pattern=r"^emp_"),
                     CallbackQueryHandler(add_employee_start, pattern=r"^add_emp_"),  # Обработка добавления сотрудника
@@ -437,6 +501,13 @@ def get_handlers() -> list:
                     CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
                 ],
                 VIEW_EMPLOYEE_DETAILS: [
+                    CallbackQueryHandler(edit_employee_start, pattern=r"^edit_emp_"),
+                    CallbackQueryHandler(delete_employee, pattern=r"^del_emp_"),
+                    CallbackQueryHandler(
+                        lambda update, context: view_employees(update, context,
+                                                               dept_id=context.user_data['current_dept']),
+                        pattern=r"^back_to_department$"
+                    ),
                     CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
                 ],
 
@@ -455,12 +526,19 @@ def get_handlers() -> list:
                 ADD_EMPLOYEE_TG_ID: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_employee_tg_id),
                     CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
-                ]
+                ],
+                CONFIRM_DELETE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, execute_delete),
+                    CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
+                ],
             },
             fallbacks=[CommandHandler("start", start)]
         ),
         CallbackQueryHandler(view_employees, pattern=r"^dept_"),
         CallbackQueryHandler(edit_department_start, pattern=r"^edit_dept_"),
         CallbackQueryHandler(confirm_delete_department, pattern=r"^delete_dept_"),
-        CallbackQueryHandler(add_employee_from_department, pattern=r"^add_emp_")
+        CallbackQueryHandler(add_employee_from_department, pattern=r"^add_emp_"),
+        CallbackQueryHandler(edit_employee_start, pattern=r"^edit_emp_"),
+        CallbackQueryHandler(delete_employee, pattern=r"^del_emp_"),
+        CallbackQueryHandler(view_employee_details, pattern=r"^emp_")  # Для возврата из редактирования
     ]
