@@ -188,22 +188,23 @@ async def execute_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("✅ Отдел успешно удалён!")
     return await show_main_menu(update, context)
+
 async def edit_department_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Редактирование названия отдела"""
     query = update.callback_query
-    dept_id = int(query.data.split('_')[3])
+    await query.answer()  # Добавить подтверждение нажатия
+    dept_id = int(query.data.split('_')[3])  # Индекс 3 для паттерна edit_dept_name_123
     context.user_data['edit_dept'] = dept_id
 
     await query.message.edit_text(
         "📝 Введите новое название отдела:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Отмена", callback_data=f"edit_dept_{dept_id}")]]
-        )
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"edit_dept_{dept_id}")]
+        ])
     )
-    return EDIT_DEPARTMENT
+    return EDIT_DEPARTMENT_NAME  # Использовать отдельное состояние для ввода названия
 
 async def save_department_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохранение нового названия отдела"""
     new_name = update.message.text.strip()
     dept_id = context.user_data.get('edit_dept')
 
@@ -213,18 +214,19 @@ async def save_department_name(update: Update, context: ContextTypes.DEFAULT_TYP
         session.commit()
 
     await update.message.reply_text(f"✅ Отдел переименован в '{new_name}'!")
-    return await show_main_menu(update, context)
+    return await view_employees(update, context, dept_id=dept_id)  # Вернуться к списку сотрудников
 
 async def edit_employee_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Старт редактирования сотрудника"""
     query = update.callback_query
+    await query.answer()  # Добавить подтверждение нажатия
     emp_id = int(query.data.split('_')[2])
     context.user_data['edit_emp'] = emp_id
 
     buttons = [
         [InlineKeyboardButton("✏️ ФИО", callback_data=f"edit_emp_name_{emp_id}")],
         [InlineKeyboardButton("📅 Дата рождения", callback_data=f"edit_emp_birth_{emp_id}")],
-        [InlineKeyboardButton("🔙 Назад", callback_data=f"emp_{emp_id}")]
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"emp_{emp_id}")]  # Исправлен паттерн
     ]
 
     await query.message.edit_text(
@@ -246,6 +248,67 @@ async def delete_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer("✅ Сотрудник удалён!")
     return await view_employees(update, context, dept_id=employee.department_id)
+
+
+# ================== ОБРАБОТЧИКИ РЕДАКТИРОВАНИЯ СОТРУДНИКА ==================
+async def edit_employee_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Редактирование ФИО сотрудника"""
+    query = update.callback_query
+    await query.answer()
+    emp_id = int(query.data.split('_')[3])
+    context.user_data['edit_emp'] = emp_id
+
+    await query.message.edit_text(
+        "✏️ Введите новое ФИО сотрудника:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"emp_{emp_id}")]
+        ])
+    )
+    return EDIT_EMPLOYEE_NAME  # Добавьте это состояние в states.py
+
+async def edit_employee_birth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Редактирование даты рождения сотрудника"""
+    query = update.callback_query
+    await query.answer()
+    emp_id = int(query.data.split('_')[3])
+    context.user_data['edit_emp'] = emp_id
+
+    await query.message.edit_text(
+        "📅 Введите новую дату рождения (ДД.ММ.ГГГГ):",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отмена", callback_data=f"emp_{emp_id}")]
+        ])
+    )
+    return EDIT_EMPLOYEE_BIRTH  # Добавьте это состояние в states.py
+
+
+async def save_employee_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    new_name = update.message.text.strip()
+    emp_id = context.user_data.get('edit_emp')
+
+    with Session() as session:
+        employee = session.get(Employee, emp_id)
+        employee.full_name = new_name
+        session.commit()
+
+    await update.message.reply_text("✅ ФИО обновлено!")
+    return await view_employee_details(update, context)
+
+
+async def save_employee_birth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    date_str = update.message.text
+    if not validate_date(date_str):
+        await update.message.reply_text("❌ Неверный формат даты!")
+        return EDIT_EMPLOYEE_BIRTH
+
+    emp_id = context.user_data.get('edit_emp')
+    with Session() as session:
+        employee = session.get(Employee, emp_id)
+        employee.birth_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+        session.commit()
+
+    await update.message.reply_text("✅ Дата рождения обновлена!")
+    return await view_employee_details(update, context)
 
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 
@@ -444,6 +507,9 @@ async def view_employee_details(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     emp_id = int(query.data.split('_')[1])
 
+    # Сохраняем ID сотрудника для возврата
+    context.user_data['last_emp_id'] = emp_id  # Добавлено
+
     with Session() as session:
         employee = session.get(Employee, emp_id)
         department = employee.department
@@ -491,7 +557,10 @@ def get_handlers() -> list:
                     CallbackQueryHandler(edit_department_name, pattern=r"^edit_dept_name_"),
                     CallbackQueryHandler(confirm_delete_department, pattern=r"^delete_dept_"),
                     CallbackQueryHandler(view_employees, pattern=r"^dept_"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_department_name)
+                ],
+                EDIT_DEPARTMENT_NAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_department_name),
+                    CallbackQueryHandler(lambda update, context: edit_department_start(update, context)),
                 ],
                 VIEW_EMPLOYEES: [
                     CallbackQueryHandler(view_employee_details, pattern=r"^emp_"),
@@ -504,9 +573,8 @@ def get_handlers() -> list:
                     CallbackQueryHandler(edit_employee_start, pattern=r"^edit_emp_"),
                     CallbackQueryHandler(delete_employee, pattern=r"^del_emp_"),
                     CallbackQueryHandler(
-                        lambda update, context: view_employees(update, context,
-                                                               dept_id=context.user_data['current_dept']),
-                        pattern=r"^back_to_department$"
+                        view_employee_details,  # Изменено с lambda-функции
+                        pattern=r"^emp_"
                     ),
                     CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
                 ],
@@ -526,6 +594,19 @@ def get_handlers() -> list:
                 ADD_EMPLOYEE_TG_ID: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, add_employee_tg_id),
                     CallbackQueryHandler(show_main_menu, pattern=r"^main_menu$")
+                ],
+                EDIT_EMPLOYEE_FIELD: [
+                    CallbackQueryHandler(edit_employee_name, pattern=r"^edit_emp_name_"),
+                    CallbackQueryHandler(edit_employee_birth, pattern=r"^edit_emp_birth_"),
+                    CallbackQueryHandler(view_employee_details, pattern=r"^emp_"),  # Обработка кнопки "Назад"
+                ],
+                EDIT_EMPLOYEE_NAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_employee_name),
+                    CallbackQueryHandler(lambda update, ctx: view_employee_details(update, ctx)),
+                ],
+                EDIT_EMPLOYEE_BIRTH: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_employee_birth),
+                    CallbackQueryHandler(lambda update, ctx: view_employee_details(update, ctx)),
                 ],
                 CONFIRM_DELETE: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, execute_delete),
