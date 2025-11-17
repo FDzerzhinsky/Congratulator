@@ -1,5 +1,5 @@
 # Файл конфигурации бота
-ADMIN_IDS = [287597756, 423674623]  # ID администраторов
+ADMIN_IDS = []  # ID администраторов
 TOKEN = "ENTER_TOKEN_HERE"  # Токен бота
 DATABASE_URL = "sqlite:///employees.db"  # Путь к БД
 # DATABASE_URL = "sqlite:///:memory:"  # Для тестов в памяти
